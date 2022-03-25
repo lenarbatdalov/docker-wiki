@@ -1,0 +1,154 @@
+; на хост машине добавить в /etc/hosts
+172.17.0.1 app.loc
+
+
+; ./html/test/index.html
+
+
+; ${NGINX_PORT}
+; ${DOMAIN}
+; ${ROOT_PATH}
+; ${FASTCGI_PASS}
+
+
+; docker-compose.yaml
+version: '3.5'
+services:
+  web:
+    restart: unless-stopped
+    image: nginx:stable-alpine
+    container_name: web
+    volumes:
+      - ./templates:/etc/nginx/templates
+      - ./html/test/index.html:/var/www/html/index.html:ro
+    ports:
+      - "80:80"
+    environment:
+      - DOMAIN=app.loc
+      - ROOT_PATH=/var/www/html/
+      - TEMPLATE=template.dev
+      - FASTCGI_PASS=fpm:9000
+      - NGINX_HOST=app.loc
+      - NGINX_PORT=80
+    command: [nginx-debug, '-g', 'daemon off;']
+    depends_on:
+      - fpm
+
+  fpm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fpm
+    restart: unless-stopped
+    environment:
+      DOMAIN: app.loc
+      SERVICE_NAME: fpm
+      SERVICE_TAGS: dev
+      APP_TIMEZONE: 'Europe/Moscow'
+      XDEBUG_CONFIG: "idekey=PHPSTORM remote_host=172.17.0.1  remote_port=9000 remote_connect_back=0"
+    working_dir: /var/www/html/
+    volumes:
+      - ./html/test/:/var/www/html/
+
+
+; ./templates/default.conf.template
+server {
+    listen ${NGINX_PORT};
+    server_name ${DOMAIN};
+    root ${ROOT_PATH};
+	index index.php index.html;
+	sendfile off;
+	client_max_body_size 64m;
+	charset utf-8;
+    # error_log /dev/stderr;
+    # access_log /dev/stdout;
+
+	location / {
+		try_files $uri $uri/ /index.php?$query_string;
+	}
+
+    location /api/ {
+		try_files $uri $uri/ /api/dev/index.php?$query_string;
+	}
+
+	location ~ \.php$ {
+		fastcgi_split_path_info ^(.+\.php)(/.+)$;
+		fastcgi_pass ${FASTCGI_PASS};
+		fastcgi_index index.php;
+		include fastcgi_params;
+		fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+		fastcgi_intercept_errors off;
+		fastcgi_buffer_size 16k;
+		fastcgi_buffers 4 16k;
+		fastcgi_connect_timeout 300;
+		fastcgi_send_timeout 300;
+		fastcgi_read_timeout 300;
+	}
+
+	location ~ /\.ht {
+		deny all;
+	}
+}
+
+
+; Dockerfile
+FROM php:7.4.18-fpm
+WORKDIR /var/www/html/
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libmcrypt-dev \
+    libpng-dev \
+    libjpeg62-turbo-dev \
+    libfreetype6-dev \
+    zlib1g-dev \
+    libxml2-dev \
+    libzip-dev \
+    libonig-dev \
+    graphviz \
+    libcurl4-openssl-dev \
+    pkg-config \
+    libpq-dev \
+    locales \
+    jpegoptim optipng pngquant gifsicle \
+    zip vim unzip \
+    git curl man
+
+RUN pecl install xdebug-2.9.2
+
+RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN docker-php-ext-install mysqli \
+    && docker-php-ext-install pdo_mysql \
+    && docker-php-ext-install mbstring \
+    && docker-php-ext-install intl \
+    && docker-php-ext-install exif \
+    && docker-php-ext-install pcntl \
+    && docker-php-ext-install zip \
+    && docker-php-ext-install opcache \
+    && docker-php-ext-enable xdebug \
+    && docker-php-source delete
+
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install -j$(nproc) gd \
+    && docker-php-source delete
+
+RUN echo "xdebug.remote_enable=on" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
+    && echo "xdebug.remote_autostart=off" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
+    && echo "xdebug.remote_port=9000" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
+    && echo "xdebug.remote_handler=dbgp" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
+    && echo "xdebug.remote_connect_back=0" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
+    && echo "xdebug.idekey=PHPSTORM" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
+    && echo "xdebug.remote_host=172.17.0.1" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
+    && echo "XDEBUG_CONFIG.remote_host=172.17.0.1" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \
+    && echo "xdebug.extended_info=1" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini
+
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
+RUN groupadd -g 1000 www
+RUN useradd -u 1000 -ms /bin/bash -g www www
+COPY ./html/test/ /var/www/html
+COPY --chown=www:www . /var/www
+USER www
+EXPOSE 9000
+CMD ["php-fpm"]
