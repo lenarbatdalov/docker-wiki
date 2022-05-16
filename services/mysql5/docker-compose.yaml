@@ -1,0 +1,30 @@
+version: '3.5'
+
+services:
+  # https://hub.docker.com/_/mysql?tab=tags
+  mysql5:
+    image: mysql:5.7.38
+    container_name: mysql5
+    restart: unless-stopped
+    tty: true
+    command: 
+      --sql_mode=''
+    ports:
+      - 3357:3306
+    environment:
+      # MYSQL_DATABASE: distr
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_USER: user
+      MYSQL_PASSWORD: user
+      SERVICE_NAME: mysql5
+    volumes:
+      # - ./mysqld.cnf:/etc/mysql/mysql.conf.d/mysqld.cnf
+      - ~/.docker-conf/mysql_5.7.38:/var/lib/mysql/
+
+# networks:
+#   net-1:
+#     driver: bridge
+
+# volumes:
+#   mysql5:
+#     driver: local
